@@ -1,17 +1,38 @@
-
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import joblib
 import pandas as pd
 
+# --------------------------------------------------
 # Initialize FastAPI app
-app = FastAPI(title="CreditPathAI - Credit Default Prediction API")
+# --------------------------------------------------
+app = FastAPI(
+    title="CreditPathAI - Credit Default Prediction API",
+    description="Predicts credit default risk using XGBoost",
+    version="1.0.0"
+)
 
-# Load frozen model and scaler
+# --------------------------------------------------
+# Enable CORS (Required for React frontend)
+# --------------------------------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # React frontend
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --------------------------------------------------
+# Load trained model & scaler
+# --------------------------------------------------
 model = joblib.load("creditpath_xgb.pkl")
 scaler = joblib.load("creditpath_scaler.pkl")
 
-# -------- Input Schema --------
+# --------------------------------------------------
+# Input schema (MATCHES DATASET EXACTLY)
+# --------------------------------------------------
 class Borrower(BaseModel):
     LIMIT_BAL: float
     SEX: int
@@ -41,27 +62,32 @@ class Borrower(BaseModel):
     PAY_AMT6: float
 
 
-# -------- Prediction Endpoint --------
+# --------------------------------------------------
+# Prediction endpoint
+# --------------------------------------------------
 @app.post("/predict")
 def predict_default(data: Borrower):
+    """
+    Predict probability of credit default and return risk category + action
+    """
 
-    # Convert input to DataFrame
-    df = pd.DataFrame([data.dict()])
+    # Convert input JSON → DataFrame
+    input_df = pd.DataFrame([data.dict()])
 
     # Apply same scaling used during training
-    scaled_input = scaler.transform(df)
+    scaled_input = scaler.transform(input_df)
 
-    # Predict probability of default
-    prob = model.predict_proba(scaled_input)[0][1]
+    # Predict probability of default (class 1)
+    probability = model.predict_proba(scaled_input)[0][1]
 
-    # Risk categorization logic
-    if prob < 0.20:
+    # Risk categorization
+    if probability < 0.20:
         risk = "Low Risk"
         action = "Send gentle SMS reminder"
-    elif prob < 0.40:
+    elif probability < 0.40:
         risk = "Moderate Risk"
         action = "Call customer and confirm repayment date"
-    elif prob < 0.60:
+    elif probability < 0.60:
         risk = "High Risk"
         action = "Offer restructuring or part-payment plan"
     else:
@@ -69,7 +95,7 @@ def predict_default(data: Borrower):
         action = "Escalate to field visit or legal notice"
 
     return {
-        "default_probability": round(float(prob), 4),
+        "default_probability": round(float(probability), 4),
         "risk_category": risk,
         "recommended_action": action
     }
